@@ -1,16 +1,19 @@
 package com.buildsmart.safety.service.impl;
 
-import com.buildsmart.safety.client.ProjectClient;
 import com.buildsmart.safety.client.UserClient;
-import com.buildsmart.safety.client.dto.ProjectDto;
 import com.buildsmart.safety.client.dto.UserDto;
 import com.buildsmart.safety.common.exception.DuplicateResourceException;
 import com.buildsmart.safety.common.exception.ResourceNotFoundException;
 import com.buildsmart.safety.common.util.IdGeneratorUtil;
+import com.buildsmart.safety.domain.model.AssignedTask;
+import com.buildsmart.safety.domain.model.AssignedTaskStatus;
 import com.buildsmart.safety.domain.model.InspectionStatus;
 import com.buildsmart.safety.domain.model.SafetyInspection;
+import com.buildsmart.safety.domain.repository.AssignedTaskRepository;
 import com.buildsmart.safety.domain.repository.SafetyInspectionRepository;
 import com.buildsmart.safety.exception.InvalidStatusTransitionException;
+import com.buildsmart.safety.exception.TaskAlreadyCompletedException;
+import com.buildsmart.safety.exception.TaskNotAssignedToOfficerException;
 import com.buildsmart.safety.exception.UnauthorizedOperationException;
 import com.buildsmart.safety.security.JwtUtil;
 import com.buildsmart.safety.service.SafetyInspectionService;
@@ -32,6 +35,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -45,7 +49,7 @@ public class SafetyInspectionServiceImpl implements SafetyInspectionService {
 
     private final SafetyInspectionRepository inspectionRepository;
     private final SafetyInspectionValidator inspectionValidator;
-    private final ProjectClient projectClient;
+    private final AssignedTaskRepository assignedTaskRepository;
     private final UserClient userClient;
     private final JwtUtil jwtUtil;
     private final NotificationService notificationService;
@@ -77,13 +81,39 @@ public class SafetyInspectionServiceImpl implements SafetyInspectionService {
                     "Only users with role SAFETY_OFFICER can schedule inspections");
         }
 
-        // Validate project via project-service
-        ProjectDto project = resolveProject(request.projectId());
+        // ── Project validation via local assigned_tasks table ──────────────
+        // We do NOT call PM service (officer JWT lacks ADMIN/PROJECT_MANAGER role).
+        // A project is "valid" for this officer if they have at least one AssignedTask
+        // for it, OR if they are creating a free (no task) inspection — in which case
+        // we just proceed (incident-style open reporting).
+        // If assignedTaskId is provided the task-level validation below covers project ownership.
+        boolean hasTaskForProject = !assignedTaskRepository
+                .findByAssignedToAndProjectId(officer.userId(), request.projectId()).isEmpty();
+        if (request.assignedTaskId() != null && !request.assignedTaskId().isBlank() && !hasTaskForProject) {
+            throw new TaskNotAssignedToOfficerException(request.assignedTaskId(), officer.userId());
+        }
 
-        // Guard: project must be active
-        if ("Completed".equals(project.status()) || "Cancelled".equals(project.status())) {
-            throw new UnauthorizedOperationException(
-                    "Cannot schedule an inspection for a project with status: " + project.status());
+        // ── Assigned-task validation (only when caller provides assignedTaskId) ──
+        AssignedTask linkedTask = null;
+        if (request.assignedTaskId() != null && !request.assignedTaskId().isBlank()) {
+            linkedTask = assignedTaskRepository.findById(request.assignedTaskId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Assigned task not found: " + request.assignedTaskId()));
+
+            // Task must belong to this officer
+            if (!linkedTask.getAssignedTo().equals(officer.userId())) {
+                throw new TaskNotAssignedToOfficerException(request.assignedTaskId(), officer.userId());
+            }
+
+            // Task must be for the same project
+            if (!linkedTask.getProjectId().equals(request.projectId())) {
+                throw new TaskNotAssignedToOfficerException(request.assignedTaskId(), officer.userId());
+            }
+
+            // Task must still be PENDING
+            if (linkedTask.getStatus() == AssignedTaskStatus.COMPLETED) {
+                throw new TaskAlreadyCompletedException(request.assignedTaskId());
+            }
         }
 
         // Duplicate guard
@@ -105,6 +135,9 @@ public class SafetyInspectionServiceImpl implements SafetyInspectionService {
         inspection.setFindings(request.findings());
         inspection.setDate(LocalDate.now());
         inspection.setStatus(InspectionStatus.SCHEDULED);
+        if (request.assignedTaskId() != null && !request.assignedTaskId().isBlank()) {
+            inspection.setAssignedTaskId(request.assignedTaskId());
+        }
 
         return InspectionMapper.toResponse(inspectionRepository.save(inspection));
     }
@@ -163,6 +196,18 @@ public class SafetyInspectionServiceImpl implements SafetyInspectionService {
         inspection.setStatus(newStatus);
         SafetyInspection saved = inspectionRepository.save(inspection);
         notificationService.notifyInspectionStatusChanged(saved, oldStatus);
+
+        // When the inspection is marked COMPLETED, automatically complete the linked task
+        if (newStatus == InspectionStatus.COMPLETED && saved.getAssignedTaskId() != null) {
+            assignedTaskRepository.findById(saved.getAssignedTaskId()).ifPresent(task -> {
+                task.setStatus(AssignedTaskStatus.COMPLETED);
+                task.setLinkedInspectionId(saved.getInspectionId());
+                task.setCompletedAt(LocalDateTime.now());
+                assignedTaskRepository.save(task);
+                log.info("Task {} marked COMPLETED via inspection {}", task.getId(), saved.getInspectionId());
+            });
+        }
+
         return InspectionMapper.toResponse(saved);
     }
 
@@ -219,17 +264,6 @@ public class SafetyInspectionServiceImpl implements SafetyInspectionService {
                 jwtUtil.extractRoles(token).stream().findFirst().orElse(""),
                 "ACTIVE"
         );
-    }
-
-    private ProjectDto resolveProject(String projectId) {
-        try {
-            ProjectDto project = projectClient.getProject(projectId);
-            if (project == null)
-                throw new ResourceNotFoundException("Project service unavailable or project not found: " + projectId);
-            return project;
-        } catch (FeignException.NotFound e) {
-            throw new ResourceNotFoundException("Project not found: " + projectId);
-        }
     }
 
     private String getAuthorizationHeader() {

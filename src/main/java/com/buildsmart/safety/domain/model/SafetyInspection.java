@@ -38,4 +38,12 @@ public class SafetyInspection {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private InspectionStatus status;
+
+    /**
+     * Optional: the AssignedTask (local safety DB ID) that this inspection is
+     * fulfilling. When the inspection reaches COMPLETED, the linked task is
+     * automatically marked COMPLETED too.
+     */
+    @Column(name = "assigned_task_id", length = 20)
+    private String assignedTaskId;
 }

@@ -3,6 +3,9 @@ package com.buildsmart.safety.web;
 import com.buildsmart.safety.common.exception.DuplicateResourceException;
 import com.buildsmart.safety.common.exception.ResourceNotFoundException;
 import com.buildsmart.safety.exception.InvalidStatusTransitionException;
+import com.buildsmart.safety.exception.ProjectNotAvailableException;
+import com.buildsmart.safety.exception.TaskAlreadyCompletedException;
+import com.buildsmart.safety.exception.TaskNotAssignedToOfficerException;
 import com.buildsmart.safety.exception.UnauthorizedOperationException;
 import feign.FeignException;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +70,21 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UnauthorizedOperationException.class)
     public ResponseEntity<Map<String, Object>> handleUnauthorized(UnauthorizedOperationException ex) {
         return error(HttpStatus.FORBIDDEN, "UNAUTHORIZED_OPERATION", ex.getMessage());
+    }
+
+    @ExceptionHandler(ProjectNotAvailableException.class)
+    public ResponseEntity<Map<String, Object>> handleProjectNotAvailable(ProjectNotAvailableException ex) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "PROJECT_NOT_AVAILABLE", ex.getMessage());
+    }
+
+    @ExceptionHandler(TaskNotAssignedToOfficerException.class)
+    public ResponseEntity<Map<String, Object>> handleTaskNotAssigned(TaskNotAssignedToOfficerException ex) {
+        return error(HttpStatus.FORBIDDEN, "TASK_NOT_ASSIGNED_TO_OFFICER", ex.getMessage());
+    }
+
+    @ExceptionHandler(TaskAlreadyCompletedException.class)
+    public ResponseEntity<Map<String, Object>> handleTaskAlreadyCompleted(TaskAlreadyCompletedException ex) {
+        return error(HttpStatus.CONFLICT, "TASK_ALREADY_COMPLETED", ex.getMessage());
     }
 
     @ExceptionHandler(AccessDeniedException.class)

@@ -27,7 +27,7 @@ public class SafetyNotification {
     private String projectId;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false)
+    @Column(name = "type", nullable = false, columnDefinition = "VARCHAR(40)")
     private SafetyNotificationType type;
 
     @Column(name = "title", nullable = false, length = 200)

@@ -15,7 +15,7 @@ public interface NotificationService {
 
     long getUnreadCount(String userId);
 
-    NotificationResponse markAsRead(String notificationId);
+    NotificationResponse markAsRead(String notificationId, String callerUserId);
 
     int markAllAsRead(String userId);
 

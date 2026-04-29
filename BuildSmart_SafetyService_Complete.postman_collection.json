@@ -15,7 +15,9 @@
     { "key": "inspectionId",   "value": "",                       "description": "Auto-set after Create Inspection" },
     { "key": "notificationId", "value": "",                       "description": "Auto-set after fetching notifications" },
     { "key": "userId",         "value": "BSSO002",                "description": "Safety officer user ID for notification tests" },
-    { "key": "projectId",      "value": "",                       "description": "Auto-set after Create Project" }
+    { "key": "projectId",      "value": "",                       "description": "Auto-set after Create Project" },
+    { "key": "assignedTaskId", "value": "",                       "description": "Auto-set after Sync Tasks from PM — local safety DB task ID (e.g. SAT001)" },
+    { "key": "pmTaskId",       "value": "",                       "description": "Auto-set after Sync Tasks from PM — original PM service task ID" }
   ],
   "item": [
 
@@ -50,7 +52,7 @@
               "raw": "{\n  \"email\": \"admin@buildsmart.com\",\n  \"password\": \"Admin@1234\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -84,7 +86,7 @@
               "raw": "{\n  \"email\": \"officer@buildsmart.com\",\n  \"password\": \"Officer@1234\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -118,7 +120,7 @@
               "raw": "{\n  \"email\": \"manager@buildsmart.com\",\n  \"password\": \"Manager@1234\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -136,7 +138,7 @@
               "raw": "{\n  \"email\": \"admin@buildsmart.com\",\n  \"password\": \"wrongpassword\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -154,7 +156,7 @@
               "raw": "{\n  \"email\": \"nobody@buildsmart.com\",\n  \"password\": \"SomePass@123\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -172,7 +174,7 @@
               "raw": "{\n  \"password\": \"Admin@1234\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "raw": "{{baseUrl}}/api/auth/login",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "login"]
             },
@@ -190,7 +192,7 @@
               "raw": "{\n  \"name\": \"Test Safety Officer\",\n  \"email\": \"testofficer@buildsmart.com\",\n  \"password\": \"TestPass@123\",\n  \"role\": \"SAFETY_OFFICER\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "raw": "{{baseUrl}}/api/auth/register",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "register"]
             },
@@ -208,7 +210,7 @@
               "raw": "{\n  \"name\": \"Duplicate User\",\n  \"email\": \"admin@buildsmart.com\",\n  \"password\": \"TestPass@123\",\n  \"role\": \"SAFETY_OFFICER\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "raw": "{{baseUrl}}/api/auth/register",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "auth", "register"]
             },
@@ -1818,7 +1820,485 @@
         }
 
       ]
+    },
+
+    {
+      "name": "ASSIGNED TASKS - Happy Path",
+      "description": "Tests for the PM-assigned task sync flow. Run 'Sync Tasks from PM' first to pull any TASK_ASSIGNED notifications from the project-service into the safety service. Uses officerToken.",
+      "item": [
+
+        {
+          "name": "Sync Tasks from PM (first call)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has newTasksSynced', () => pm.expect(json).to.have.property('newTasksSynced'));",
+                  "if (json.newTasks && json.newTasks.length > 0) {",
+                  "    pm.collectionVariables.set('assignedTaskId', json.newTasks[0].id);",
+                  "    pm.collectionVariables.set('pmTaskId', json.newTasks[0].pmTaskId);",
+                  "    console.log('assignedTaskId set to ' + json.newTasks[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "sync"]
+            },
+            "description": "Pulls TASK_ASSIGNED notifications from the project-service for the logged-in safety officer. New tasks are stored locally and popup notifications are created. Expected: 200 OK with SyncResult {newTasksSynced, alreadyExisted, newTasks[]}."
+          }
+        },
+
+        {
+          "name": "Sync Tasks from PM (second call — idempotent, no duplicates)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No new tasks synced on repeat call', () => pm.expect(json.newTasksSynced).to.equal(0));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "sync"]
+            },
+            "description": "Calling sync again should return newTasksSynced=0 — tasks already exist and PM notification IDs are tracked."
+          }
+        },
+
+        {
+          "name": "Get My Tasks (all)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks"]
+            },
+            "description": "Returns all tasks assigned to the authenticated safety officer. Fields: id, pmTaskId, projectId, assignedTo, assignedBy, description, status (PENDING/COMPLETED), linkedInspectionId, syncedAt, completedAt."
+          }
+        },
+
+        {
+          "name": "Get My Tasks - Filter PENDING",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks?status=PENDING",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks"],
+              "query": [{ "key": "status", "value": "PENDING" }]
+            },
+            "description": "Returns only PENDING tasks for the current officer. These are tasks the PM assigned but no completed inspection has been linked yet."
+          }
+        },
+
+        {
+          "name": "Get My Tasks - Filter COMPLETED",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks?status=COMPLETED",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks"],
+              "query": [{ "key": "status", "value": "COMPLETED" }]
+            },
+            "description": "Returns tasks where the officer has completed the linked inspection. linkedInspectionId and completedAt will be populated."
+          }
+        },
+
+        {
+          "name": "Get My Tasks For Project",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/project/{{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "project", "{{projectId}}"]
+            },
+            "description": "Returns tasks assigned to the current officer for a specific project. Expected: 200 OK with array (may be empty if no tasks for that project)."
+          }
+        },
+
+        {
+          "name": "Create Inspection Linked to Assigned Task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('assignedTaskId present in response', () => pm.expect(json.assignedTaskId).to.exist);",
+                  "if (json.inspectionId) pm.collectionVariables.set('inspectionId', json.inspectionId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{officerToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"inspectionType\": \"FIRE_SAFETY\",\n  \"findings\": \"Full fire safety inspection carried out per PM task instructions.\",\n  \"assignedTaskId\": \"{{assignedTaskId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Creates an inspection and links it to an assigned task. Validation: task must belong to this officer, task's projectId must match, task must be PENDING. When inspection later reaches COMPLETED the task auto-moves to COMPLETED."
+          }
+        },
+
+        {
+          "name": "Update Inspection to IN_PROGRESS (linked task still PENDING)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections/{{inspectionId}}/status?status=IN_PROGRESS",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections", "{{inspectionId}}", "status"],
+              "query": [{ "key": "status", "value": "IN_PROGRESS" }]
+            },
+            "description": "Moves inspection to IN_PROGRESS. Task stays PENDING at this point."
+          }
+        },
+
+        {
+          "name": "Update Inspection to COMPLETED → Task auto-completes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Inspection COMPLETED', () => pm.expect(pm.response.json().status).to.equal('COMPLETED'));",
+                  "console.log('Now verify the task via GET /api/safety/tasks?status=COMPLETED — it should appear there.');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections/{{inspectionId}}/status?status=COMPLETED",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections", "{{inspectionId}}", "status"],
+              "query": [{ "key": "status", "value": "COMPLETED" }]
+            },
+            "description": "When inspection reaches COMPLETED, the linked AssignedTask is automatically set to COMPLETED with completedAt timestamp and linkedInspectionId populated. Run 'Get My Tasks - Filter COMPLETED' after this to verify."
+          }
+        },
+
+        {
+          "name": "Verify Task Now COMPLETED (after inspection completes)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks?status=COMPLETED",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks"],
+              "query": [{ "key": "status", "value": "COMPLETED" }]
+            },
+            "description": "After the linked inspection is COMPLETED the task should appear here with linkedInspectionId set to the inspection ID and completedAt populated."
+          }
+        },
+
+        {
+          "name": "TASK_ASSIGNED Popup Notification created by sync",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var taskNotifs = json.filter(n => n.type === 'TASK_ASSIGNED');",
+                  "pm.test('At least one TASK_ASSIGNED notification exists', () => pm.expect(taskNotifs.length).to.be.above(0));",
+                  "if (taskNotifs.length > 0) pm.collectionVariables.set('notificationId', taskNotifs[0].notificationId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/notifications/user/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "notifications", "user", "{{userId}}"]
+            },
+            "description": "Each synced task creates a TASK_ASSIGNED SafetyNotification (popup). This verifies the notification exists with type=TASK_ASSIGNED, title='New Task Assigned: TASKXXX', and relatedEntityId=SAT001."
+          }
+        }
+
+      ]
+    },
+
+    {
+      "name": "ASSIGNED TASKS - Error Cases",
+      "description": "Error and edge-case tests for the assigned task flow.",
+      "item": [
+
+        {
+          "name": "Sync Tasks - No Token (401)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "sync"]
+            },
+            "description": "Expected: 401 Unauthorized — no JWT provided."
+          }
+        },
+
+        {
+          "name": "Sync Tasks - Wrong Role (SITE_ENGINEER) (403)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{managerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "sync"]
+            },
+            "description": "Expected: 403 Forbidden — only SAFETY_OFFICER or ADMIN can sync tasks. Use a PROJECT_MANAGER token to simulate wrong role."
+          }
+        },
+
+        {
+          "name": "Get My Tasks - No Token (401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks"]
+            },
+            "description": "Expected: 401 Unauthorized."
+          }
+        },
+
+        {
+          "name": "Create Inspection - assignedTaskId not found (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{officerToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"inspectionType\": \"FIRE_SAFETY\",\n  \"findings\": \"Inspection findings with a non-existent assigned task id.\",\n  \"assignedTaskId\": \"SAT999\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Expected: 404 Not Found — SAT999 does not exist in assigned_tasks table."
+          }
+        },
+
+        {
+          "name": "Create Inspection - Task belongs to different officer (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"inspectionType\": \"ELECTRICAL\",\n  \"findings\": \"Trying to use another officer task which is 20+ chars long.\",\n  \"assignedTaskId\": \"{{assignedTaskId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Expected: 403 UNAUTHORIZED_OPERATION — task was assigned to a different officer (BSSO002) but this request is made with adminToken for a different userId."
+          }
+        },
+
+        {
+          "name": "Create Inspection - Task already COMPLETED (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{officerToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"inspectionType\": \"STRUCTURAL\",\n  \"findings\": \"Second inspection attempt on an already completed task.\",\n  \"assignedTaskId\": \"{{assignedTaskId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Expected: 409 TASK_ALREADY_COMPLETED — the task was already completed by the previous inspection. Run this AFTER the 'Update Inspection to COMPLETED' request above."
+          }
+        },
+
+        {
+          "name": "Create Inspection - Project is COMPLETED/CANCELLED (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{officerToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"PROJ-CLOSED-001\",\n  \"inspectionType\": \"FIRE_SAFETY\",\n  \"findings\": \"Attempting inspection on a closed project for testing purposes.\",\n  \"assignedTaskId\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Expected: 422 PROJECT_NOT_AVAILABLE — project status is COMPLETED or CANCELLED. Replace projectId with a known closed project ID in your environment."
+          }
+        },
+
+        {
+          "name": "Get Tasks For Unrelated Project (empty array)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/tasks/project/PROJ-OTHER-999",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "tasks", "project", "PROJ-OTHER-999"]
+            },
+            "description": "Expected: 200 OK with empty array — this officer has no tasks on project PROJ-OTHER-999."
+          }
+        }
+
+      ]
+    },
+
+    {
+      "name": "INSPECTIONS - New Fields (assignedTaskId)",
+      "description": "Verifies that existing inspection endpoints now return the new assignedTaskId field, and that creating without assignedTaskId still works.",
+      "item": [
+
+        {
+          "name": "Create Inspection WITHOUT assignedTaskId (still valid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "var json = pm.response.json();",
+                  "pm.test('assignedTaskId is null', () => pm.expect(json.assignedTaskId).to.be.null);",
+                  "if (json.inspectionId) pm.collectionVariables.set('freeInspectionId', json.inspectionId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{officerToken}}" },
+              { "key": "Content-Type",   "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"inspectionType\": \"ENVIRONMENTAL\",\n  \"findings\": \"Routine environmental check carried out without PM task link.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections"]
+            },
+            "description": "Backwards compatibility test — omitting assignedTaskId is still allowed. Response should have assignedTaskId: null."
+          }
+        },
+
+        {
+          "name": "Get Inspection By ID - verify assignedTaskId field",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('assignedTaskId field exists in response', () => pm.expect(pm.response.json()).to.have.property('assignedTaskId'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{officerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/safety/inspections/{{inspectionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "safety", "inspections", "{{inspectionId}}"]
+            },
+            "description": "Verifies that the new assignedTaskId field is always present in InspectionResponse (null or the task ID)."
+          }
+        }
+
+      ]
     }
 
   ]
 }
+
+

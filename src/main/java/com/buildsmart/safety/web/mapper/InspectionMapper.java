@@ -16,7 +16,8 @@ public class InspectionMapper {
                 inspection.getOfficerName(),
                 inspection.getInspectionType(),
                 inspection.getFindings(),
-                inspection.getStatus()
+                inspection.getStatus(),
+                inspection.getAssignedTaskId()
         );
     }
 }

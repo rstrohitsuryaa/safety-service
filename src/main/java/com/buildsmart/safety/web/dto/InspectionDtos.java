@@ -19,7 +19,16 @@ public class InspectionDtos {
 
             @NotBlank(message = "findings is required")
             @Size(min = 20, max = 200, message = "findings must be between 20 and 200 characters")
-            String findings
+            String findings,
+
+            /**
+             * Optional: local AssignedTask ID (e.g. "SAT001") to link this
+             * inspection to a PM-assigned task.
+             * When provided the service validates:
+             * (1) the task exists, (2) it belongs to the current officer,
+             * (3) its projectId matches, (4) it is still PENDING.
+             */
+            String assignedTaskId
     ) {}
 
     public record InspectionResponse(
@@ -30,6 +39,7 @@ public class InspectionDtos {
             String officerName,
             InspectionType inspectionType,
             String findings,
-            InspectionStatus status
+            InspectionStatus status,
+            String assignedTaskId
     ) {}
 }

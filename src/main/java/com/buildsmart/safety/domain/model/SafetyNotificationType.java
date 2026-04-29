@@ -1,6 +1,7 @@
 package com.buildsmart.safety.domain.model;
 
 public enum SafetyNotificationType {
+    TASK_ASSIGNED("Task Assigned"),
     INCIDENT_REPORTED("Incident Reported"),
     INCIDENT_STATUS_CHANGED("Incident Status Changed"),
     INSPECTION_SCHEDULED("Inspection Scheduled"),

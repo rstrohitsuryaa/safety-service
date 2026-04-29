@@ -36,4 +36,17 @@ public class IdGeneratorUtil {
             return "NTF001";
         }
     }
+
+    /**
+     * Generates the next AssignedTask local ID (e.g. SAT001, SAT002 ...).
+     */
+    public static String nextAssignedTaskId(String lastId) {
+        if (lastId == null || lastId.isBlank()) return "SAT001";
+        try {
+            int num = Integer.parseInt(lastId.replace("SAT", ""));
+            return String.format("SAT%03d", num + 1);
+        } catch (NumberFormatException e) {
+            return "SAT001";
+        }
+    }
 }

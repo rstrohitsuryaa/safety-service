@@ -1,14 +1,14 @@
 package com.buildsmart.safety.service.impl;
 
-import com.buildsmart.safety.client.ProjectClient;
 import com.buildsmart.safety.client.UserClient;
-import com.buildsmart.safety.client.dto.ProjectDto;
 import com.buildsmart.safety.client.dto.UserDto;
 import com.buildsmart.safety.common.exception.ResourceNotFoundException;
 import com.buildsmart.safety.common.util.IdGeneratorUtil;
+import com.buildsmart.safety.domain.model.AssignedTaskStatus;
 import com.buildsmart.safety.domain.model.Incident;
 import com.buildsmart.safety.domain.model.IncidentSeverity;
 import com.buildsmart.safety.domain.model.IncidentStatus;
+import com.buildsmart.safety.domain.repository.AssignedTaskRepository;
 import com.buildsmart.safety.domain.repository.IncidentRepository;
 import com.buildsmart.safety.exception.InvalidStatusTransitionException;
 import com.buildsmart.safety.exception.UnauthorizedOperationException;
@@ -28,13 +28,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
-
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Slf4j
 @Service
@@ -44,7 +44,7 @@ public class IncidentServiceImpl implements IncidentService {
 
     private final IncidentRepository incidentRepository;
     private final IncidentValidator incidentValidator;
-    private final ProjectClient projectClient;
+    private final AssignedTaskRepository assignedTaskRepository;
     private final UserClient userClient;
     private final JwtUtil jwtUtil;
     private final NotificationService notificationService;
@@ -69,13 +69,16 @@ public class IncidentServiceImpl implements IncidentService {
                     "Your account is not active. Current status: " + reporter.status());
         }
 
-        // Validate project exists via project-service
-        ProjectDto project = resolveProject(request.projectId());
-
-        // Guard: project must be active
-        if ("Completed".equals(project.status()) || "Cancelled".equals(project.status())) {
+        // Guard: officer must have an active (PENDING) assigned task for this project.
+        // Once all tasks are completed they are no longer part of the project.
+        boolean hasActiveTask = assignedTaskRepository
+                .findByAssignedToAndStatusOrderBySyncedAtDesc(reporter.userId(), AssignedTaskStatus.PENDING)
+                .stream()
+                .anyMatch(t -> t.getProjectId().equals(request.projectId()));
+        if (!hasActiveTask) {
             throw new UnauthorizedOperationException(
-                    "Cannot report an incident for a project with status: " + project.status());
+                    "You do not have an active assigned task for project " + request.projectId()
+                    + ". Sync your tasks first, or you may no longer be assigned to this project.");
         }
 
         Incident last = incidentRepository.findTopByOrderByIncidentIdDesc();
@@ -89,7 +92,9 @@ public class IncidentServiceImpl implements IncidentService {
         incident.setDate(LocalDate.now());
         incident.setStatus(IncidentStatus.OPEN);
 
-        return IncidentMapper.toResponse(incidentRepository.save(incident));
+        Incident saved = incidentRepository.save(incident);
+        notificationService.notifyIncidentReported(saved);
+        return IncidentMapper.toResponse(saved);
     }
 
     @Override
@@ -217,14 +222,5 @@ public class IncidentServiceImpl implements IncidentService {
         throw new IllegalStateException("Authorization header missing");
     }
 
-    private ProjectDto resolveProject(String projectId) {
-        try {
-            ProjectDto project = projectClient.getProject(projectId);
-            if (project == null)
-                throw new ResourceNotFoundException("Project service unavailable or project not found: " + projectId);
-            return project;
-        } catch (FeignException.NotFound e) {
-            throw new ResourceNotFoundException("Project not found: " + projectId);
-        }
-    }
 }
+

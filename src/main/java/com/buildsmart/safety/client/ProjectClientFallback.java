@@ -9,9 +9,8 @@ import org.springframework.stereotype.Component;
 public class ProjectClientFallback implements ProjectClient {
 
     @Override
-    public ProjectDto getProject(String projectId) {
+    public ProjectDto getProject(String projectId, String bearerToken) {
         log.warn("Project service is unavailable — circuit breaker fallback triggered for project {}", projectId);
-        // Return null so resolveProject() throws ResourceNotFoundException cleanly
         return null;
     }
 }
